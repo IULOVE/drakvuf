@@ -115,13 +115,6 @@
 #include "private.h"
 
 
-static uint64_t make_hook_id(const drakvuf_trap_info_t* info)
-{
-    uint64_t u64_pid = info->attached_proc_data.pid;
-    uint64_t u64_tid = info->attached_proc_data.tid;
-    return (u64_pid << 32) | u64_tid;
-}
-
 namespace
 {
 
@@ -339,6 +332,12 @@ static std::optional<rpc_message_t> parse_RPC_MESSAGE(drakvuf_t drakvuf, drakvuf
         ctx.addr = arg + RPC_MESSAGE_RPCINTERFACEINFO_OFFSET_X86;
     else
         ctx.addr = arg + RPC_MESSAGE_RPCINTERFACEINFO_OFFSET_X64;
+
+    addr_t p_rpc_iface = 0;
+    if (VMI_SUCCESS != vmi_read_addr(vmi, &ctx, &p_rpc_iface))
+        return {};
+
+    ctx.addr = p_rpc_iface;
     auto rpc_iface = read_struct<_RPC_CLIENT_INTERFACE>(vmi, &ctx);
     if (!rpc_iface)
         return {};
@@ -409,7 +408,7 @@ event_response_t rpcmon::usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap
         keyval("ExtraNum", fmt_extra_num)
     );
 
-    uint64_t hookID = make_hook_id(info);
+    auto hookID = make_hook_id(info, params->target_rsp);
     ret_hooks.erase(hookID);
 
     return VMI_EVENT_RESPONSE_NONE;
@@ -451,7 +450,6 @@ static event_response_t usermode_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info* i
         arguments.push_back(argument);
     }
 
-    uint64_t hookID = make_hook_id(info);
     auto hook = plugin->createReturnHook<RpcmonReturnHookData>(info,
             &rpcmon::usermode_return_hook_cb, target->target_name.data(), drakvuf_get_limited_traps_ttl(drakvuf));
     auto params = libhook::GetTrapParams<RpcmonReturnHookData>(hook->trap_);
@@ -459,6 +457,7 @@ static event_response_t usermode_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info* i
     params->arguments = std::move(arguments);
     params->target = target;
 
+    auto hookID = make_hook_id(info, params->target_rsp);
     plugin->ret_hooks[hookID] = std::move(hook);
 
     return VMI_EVENT_RESPONSE_NONE;
